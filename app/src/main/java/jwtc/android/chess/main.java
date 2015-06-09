@@ -7,6 +7,9 @@ import android.media.RingtoneManager;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Environment;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.Message;
 import android.os.PowerManager;
 import android.speech.tts.TextToSpeech.OnInitListener;
 import android.text.ClipboardManager;
@@ -25,7 +28,8 @@ import android.database.Cursor;
 
 import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.InputStream; 
+import java.io.InputStream;
+import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.Date;
@@ -34,7 +38,7 @@ import android.speech.tts.TextToSpeech.OnInitListener;
 import java.util.Locale;
 import android.speech.*;
 
-public class main extends MyBaseActivity  implements OnInitListener, RecognitionListener{
+public class main extends MyBaseActivity  implements OnInitListener{
 	
     /** instances for the view and game of chess **/
 	private ChessView _chessView;
@@ -50,15 +54,42 @@ public class main extends MyBaseActivity  implements OnInitListener, Recognition
 	private Ringtone _ringNotification;
 	private String _keyboardBuffer;
 	private TextToSpeech _speech = null;
-	private SpeechRecognizer _speechRec = null;
+	private SpeechListener _speechListener;
 
 	public static final int REQUEST_SETUP = 1;
 	public static final int REQUEST_OPEN = 2;
 	public static final int REQUEST_OPTIONS = 3;
 	public static final int REQUEST_NEWGAME = 4;
-	public static final int REQUEST_FROM_QR_CODE = 5;	
-	
-	
+	public static final int REQUEST_FROM_QR_CODE = 5;
+
+	public static final int MSG_SPEECH_OK = 1;
+	public static final int MSG_SPEECH_ERR = 2;
+
+	static class InnerHandler extends Handler {
+		WeakReference<main> _main;
+
+		InnerHandler(main m){
+			_main = new WeakReference<main>(m);
+		}
+		@Override public void handleMessage(Message msg) {
+
+			main m = _main.get();
+			if(m != null){
+				switch(msg.what){
+					case MSG_SPEECH_OK:
+						Bundle bun = msg.getData();
+						m.doToast(bun.getString("buffer"));
+						break;
+					case MSG_SPEECH_ERR:
+						break;
+				}
+
+				m.startListening();
+			}
+		}
+	}
+
+	protected InnerHandler _innerHandler = new InnerHandler(this);
     /** Called when the activity is first created. */
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -98,14 +129,6 @@ public class main extends MyBaseActivity  implements OnInitListener, Recognition
         //getContentResolver().delete(PGNColumns.CONTENT_URI, "1=1", null);
         
         _dlgSave = null;
-
-		try {
-			_speechRec = SpeechRecognizer.createSpeechRecognizer(getApplicationContext());
-			_speechRec.setRecognitionListener(this);
-		} catch(Exception ex){
-			Log.w("Speech", "no speech recognizer");
-		}
-
     }
     
     public void onWindowFocusChanged(boolean hasFocus) {
@@ -390,13 +413,12 @@ public class main extends MyBaseActivity  implements OnInitListener, Recognition
         }
         
         _chessView.OnResume(prefs);
-        
-        _chessView.updateState();
+
+		_chessView.updateState();
 
 
-		if(_speechRec != null) {
-			_speechRec.startListening(RecognizerIntent.getVoiceDetailsIntent(getApplicationContext()));
-		}
+		_speechListener = new SpeechListener();
+		startListening();
         //
         super.onResume();
     }
@@ -409,8 +431,9 @@ public class main extends MyBaseActivity  implements OnInitListener, Recognition
         	_wakeLock.release();
         }
 
-		_speechRec.stopListening();
-		_speechRec = null;
+		_speechListener.stopListening();
+		_speechListener = null;
+
  //Debug.stopMethodTracing();
         
         if(_lGameID > 0){
@@ -651,7 +674,7 @@ public class main extends MyBaseActivity  implements OnInitListener, Recognition
     	 _chessView.setPGNHeadProperty("Event", (String)values.get(PGNColumns.EVENT));
     	 _chessView.setPGNHeadProperty("White", (String)values.get(PGNColumns.WHITE));
     	 _chessView.setPGNHeadProperty("Black", (String)values.get(PGNColumns.BLACK));
-    	 _chessView.setDateLong((Long)values.get(PGNColumns.DATE));
+    	 _chessView.setDateLong((Long) values.get(PGNColumns.DATE));
     	 
     	 _fGameRating = (Float)values.get(PGNColumns.RATING);
     	 //
@@ -722,60 +745,106 @@ public class main extends MyBaseActivity  implements OnInitListener, Recognition
 		
 	}
 
-	@Override
-	public void onBeginningOfSpeech() {
-		Log.d("Speech", "onBeginningOfSpeech");
-	}
+	protected void startListening(){
 
-	@Override
-	public void onBufferReceived(byte[] buffer) {
-		Log.d("Speech", "onBufferReceived");
-	}
-
-	@Override
-	public void onEndOfSpeech() {
-		Log.d("Speech", "onEndOfSpeech");
-	}
-
-	@Override
-	public void onError(int error) {
-		Log.d("Speech", "onError");
-		if(_speechRec != null) {
-			_speechRec.startListening(RecognizerIntent.getVoiceDetailsIntent(getApplicationContext()));
+		if(_speechListener != null) {
+			Handler loopHandler = new Handler(Looper.getMainLooper());
+			loopHandler.postDelayed(_speechListener, 3000);
 		}
 	}
 
-	@Override
-	public void onEvent(int eventType, Bundle params) {
-		Log.d("Speech", "onEvent");
-	}
+	private class SpeechListener implements RecognitionListener, Runnable {
 
-	@Override
-	public void onPartialResults(Bundle partialResults) {
-		Log.d("Speech", "onPartialResults");
-	}
+		private SpeechRecognizer _speechRec;
+		public SpeechListener(){
+			_speechRec = null;
+		}
+		@Override
+		public void run()
+		{
+			Log.i("SpeechListener", "run()");
+			if(_speechRec == null) {
+				try {
+					_speechRec = SpeechRecognizer.createSpeechRecognizer(getApplicationContext());
+					_speechRec.setRecognitionListener(this);
 
-	@Override
-	public void onReadyForSpeech(Bundle params) {
-		Log.d("Speech", "onReadyForSpeech");
-	}
+				} catch (Exception ex) {
+					Log.w("Speech", "no speech recognizer");
+				}
+			}
+			if(_speechRec != null){
+				_speechRec.startListening(RecognizerIntent.getVoiceDetailsIntent(getApplicationContext()));
+			}
+		}
+
+		public void stopListening(){
+			_speechRec.stopListening();
+		}
+
+		@Override
+		public void onBeginningOfSpeech() {
+			Log.d("Speech", "onBeginningOfSpeech");
+		}
+
+		@Override
+		public void onBufferReceived(byte[] buffer) {
+			Log.d("Speech", "onBufferReceived");
+		}
+
+		@Override
+		public void onEndOfSpeech() {
+			Log.d("Speech", "onEndOfSpeech");
+		}
+
+		@Override
+		public void onError(int error) {
+			Log.d("Speech", "onError");
+			Message msg = new Message();
+			msg.what = MSG_SPEECH_ERR;
+			_innerHandler.sendMessage(msg);
+		}
+
+		@Override
+		public void onEvent(int eventType, Bundle params) {
+			Log.d("Speech", "onEvent");
+		}
+
+		@Override
+		public void onPartialResults(Bundle partialResults) {
+			Log.d("Speech", "onPartialResults");
+		}
+
+		@Override
+		public void onReadyForSpeech(Bundle params) {
+			Log.d("Speech", "onReadyForSpeech");
+		}
 
 
-	@Override
-	public void onResults(Bundle results) {
-		Log.d("Speech", "onResults");
-		ArrayList strlist = results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
+		@Override
+		public void onResults(Bundle results) {
+			Log.d("Speech", "onResults");
+			ArrayList strlist = results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
+			if (strlist.size() > 0) {
+
+				Message msg = new Message();
+				msg.what = MSG_SPEECH_OK;
+				Bundle bun = new Bundle();
+				bun.putString("buffer", "" + strlist.get(0));
+				msg.setData(bun);
+
+				_innerHandler.sendMessage(msg);
+			}
+		/*
 		for (int i = 0; i < strlist.size();i++ ) {
 			Log.d("Speech", "result=" + strlist.get(i));
-		}
-		if(_speechRec != null) {
-			_speechRec.startListening(RecognizerIntent.getVoiceDetailsIntent(getApplicationContext()));
-		}
-	}
+		}*/
+			main.this.startListening();
 
-	@Override
-	public void onRmsChanged(float rmsdB) {
-		//Log.d("Speech", "onRmsChanged");
+		}
+
+		@Override
+		public void onRmsChanged(float rmsdB) {
+			//Log.d("Speech", "onRmsChanged");
+		}
 	}
-	
 }
