@@ -32,8 +32,9 @@ import java.util.Date;
 import android.speech.tts.TextToSpeech;
 import android.speech.tts.TextToSpeech.OnInitListener;
 import java.util.Locale;
+import android.speech.*;
 
-public class main extends MyBaseActivity  implements OnInitListener{ 
+public class main extends MyBaseActivity  implements OnInitListener, RecognitionListener{
 	
     /** instances for the view and game of chess **/
 	private ChessView _chessView;
@@ -49,7 +50,8 @@ public class main extends MyBaseActivity  implements OnInitListener{
 	private Ringtone _ringNotification;
 	private String _keyboardBuffer;
 	private TextToSpeech _speech = null;
-	
+	private SpeechRecognizer _speechRec = null;
+
 	public static final int REQUEST_SETUP = 1;
 	public static final int REQUEST_OPEN = 2;
 	public static final int REQUEST_OPTIONS = 3;
@@ -96,8 +98,14 @@ public class main extends MyBaseActivity  implements OnInitListener{
         //getContentResolver().delete(PGNColumns.CONTENT_URI, "1=1", null);
         
         _dlgSave = null;
-        
-        
+
+		try {
+			_speechRec = SpeechRecognizer.createSpeechRecognizer(getApplicationContext());
+			_speechRec.setRecognitionListener(this);
+		} catch(Exception ex){
+			Log.w("Speech", "no speech recognizer");
+		}
+
     }
     
     public void onWindowFocusChanged(boolean hasFocus) {
@@ -384,6 +392,11 @@ public class main extends MyBaseActivity  implements OnInitListener{
         _chessView.OnResume(prefs);
         
         _chessView.updateState();
+
+
+		if(_speechRec != null) {
+			_speechRec.startListening(RecognizerIntent.getVoiceDetailsIntent(getApplicationContext()));
+		}
         //
         super.onResume();
     }
@@ -395,6 +408,9 @@ public class main extends MyBaseActivity  implements OnInitListener{
         {
         	_wakeLock.release();
         }
+
+		_speechRec.stopListening();
+		_speechRec = null;
  //Debug.stopMethodTracing();
         
         if(_lGameID > 0){
@@ -706,5 +722,60 @@ public class main extends MyBaseActivity  implements OnInitListener{
 		
 	}
 
+	@Override
+	public void onBeginningOfSpeech() {
+		Log.d("Speech", "onBeginningOfSpeech");
+	}
+
+	@Override
+	public void onBufferReceived(byte[] buffer) {
+		Log.d("Speech", "onBufferReceived");
+	}
+
+	@Override
+	public void onEndOfSpeech() {
+		Log.d("Speech", "onEndOfSpeech");
+	}
+
+	@Override
+	public void onError(int error) {
+		Log.d("Speech", "onError");
+		if(_speechRec != null) {
+			_speechRec.startListening(RecognizerIntent.getVoiceDetailsIntent(getApplicationContext()));
+		}
+	}
+
+	@Override
+	public void onEvent(int eventType, Bundle params) {
+		Log.d("Speech", "onEvent");
+	}
+
+	@Override
+	public void onPartialResults(Bundle partialResults) {
+		Log.d("Speech", "onPartialResults");
+	}
+
+	@Override
+	public void onReadyForSpeech(Bundle params) {
+		Log.d("Speech", "onReadyForSpeech");
+	}
+
+
+	@Override
+	public void onResults(Bundle results) {
+		Log.d("Speech", "onResults");
+		ArrayList strlist = results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
+		for (int i = 0; i < strlist.size();i++ ) {
+			Log.d("Speech", "result=" + strlist.get(i));
+		}
+		if(_speechRec != null) {
+			_speechRec.startListening(RecognizerIntent.getVoiceDetailsIntent(getApplicationContext()));
+		}
+	}
+
+	@Override
+	public void onRmsChanged(float rmsdB) {
+		//Log.d("Speech", "onRmsChanged");
+	}
 	
 }
